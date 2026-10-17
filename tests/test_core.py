@@ -185,7 +185,7 @@ def test_preferences_only_public(tmp_path):
     settings = Settings()
     settings.save(path)
     data = json.loads(path.read_text())
-    assert set(data) == {'appearance', 'categories', 'provider', 'model', 'base_url', 'body_limit'}
+    assert set(data) == {'appearance', 'login_method', 'categories', 'provider', 'model', 'base_url', 'body_limit'}
     assert Settings.load(path) == settings
     path.write_text('{invalid')
     assert Settings.load(path) == Settings()

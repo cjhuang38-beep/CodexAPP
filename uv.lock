@@ -263,7 +263,7 @@ wheels = [
 
 [[package]]
 name = "gmail-summary-desktop"
-version = "0.1.0"
+version = "0.2.0"
 source = { virtual = "." }
 dependencies = [
     { name = "beautifulsoup4" },

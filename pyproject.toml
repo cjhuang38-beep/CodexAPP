@@ -1,6 +1,6 @@
 [project]
 name = "gmail-summary-desktop"
-version = "0.1.0"
+version = "0.2.0"
 description = "繁體中文 Gmail 分類與摘要桌面 App"
 requires-python = ">=3.11,<3.14"
 dependencies = [

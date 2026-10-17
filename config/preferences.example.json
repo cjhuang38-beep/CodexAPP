@@ -1,5 +1,6 @@
 {
   "appearance": "深色",
+  "login_method": "imap",
   "categories": ["課程邀約", "學術研究", "行政通知", "帳務", "行銷", "其他"],
   "provider": "OpenAI",
   "model": "gpt-4.1-mini",

@@ -18,6 +18,7 @@ def config_dir() -> Path:
 @dataclass
 class Settings:
     appearance: str = "深色"
+    login_method: str = "imap"
     categories: list[str] = field(default_factory=lambda: list(DEFAULT_CATEGORIES))
     provider: str = "OpenAI"
     model: str = "gpt-4.1-mini"
@@ -32,7 +33,8 @@ class Settings:
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
             obj = cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
-            if (obj.appearance not in {"深色", "淺色"} or obj.provider not in {"OpenAI", "OpenAI 相容"}
+            if (obj.appearance not in {"深色", "淺色"} or obj.login_method not in {"imap", "oauth"}
+                    or obj.provider not in {"OpenAI", "OpenAI 相容"}
                     or not isinstance(obj.categories, list) or not obj.categories
                     or len(obj.categories) > 100
                     or not all(isinstance(c, str) and c.strip() and len(c) <= 60 for c in obj.categories)

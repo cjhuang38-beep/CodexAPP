@@ -1,5 +1,7 @@
 # 開發者 OAuth 設定與 Google 發布要求
 
+2026-10-18：已新增免 Cloud Console 的 Gmail 應用程式密碼連線。一般使用者可先依 [簡易連線說明](IMAP_QUICKSTART.md) 操作；本文件只適用於進階瀏覽器 OAuth 選項。
+
 ## 查核狀態（2026-10-17）
 
 本次嘗試讀取下列 Google 官方網頁，環境代理全部回覆 **403 Forbidden**。因此下列發布說明是待開發者依官方現行政策再次核對的清單，**不宣稱本次已完成即時政策查核、Google 驗證或正式發布**。程式使用的已鎖版官方 `google-auth-oauthlib==1.2.3` 實作已在本機檢查：InstalledAppFlow 以系統瀏覽器登入、loopback 回呼、state 驗證、PKCE（明確啟用），不使用已淘汰的 OOB 手動貼碼流程。授權範圍也可在已安裝的 Gmail API 官方 discovery 文件中確認。

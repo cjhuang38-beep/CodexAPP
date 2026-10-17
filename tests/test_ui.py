@@ -1,4 +1,5 @@
 """Run with DISPLAY on Linux; real Windows checks remain a separate release gate."""
+import gc
 import os
 import threading
 import time
@@ -10,6 +11,8 @@ pytestmark = pytest.mark.skipif(os.name != 'nt' and not os.environ.get('DISPLAY'
 
 @pytest.fixture
 def app(monkeypatch, tmp_path):
+    # Tk objects must be finalized on the main thread, including previous test roots.
+    gc.collect()
     import gmail_summary.settings as settings
     monkeypatch.setattr(settings, 'config_dir', lambda: tmp_path / 'config')
     from gmail_summary.ui import App
@@ -22,8 +25,10 @@ def app(monkeypatch, tmp_path):
     monkeypatch.setattr('gmail_summary.ui.messagebox.askyesnocancel', lambda *a, **k: False)
     monkeypatch.setattr('gmail_summary.ui.messagebox.askyesno', lambda *a, **k: True)
     instance.update()
+    gc.collect()
     yield instance
     instance.destroy()
+    gc.collect()
     assert not errors, errors
 
 
@@ -151,3 +156,77 @@ def test_body_restore_preserves_manual_edit_and_reauth_state(app):
     app.handle_event('reauth', '授權失效')
     assert app.mailbox is None and '重新登入' in app.connection.get()
     assert len(app.store.messages) == 1, '授權失效不應丟失尚未匯出的摘要'
+
+
+def test_imap_login_restore_and_logout_without_oauth(app, monkeypatch):
+    from unittest.mock import Mock
+    from gmail_summary.imap_mail import GmailImapService
+    mailbox = GmailImapService('reader@example.invalid', 'abcdefghijklmnop', Mock())
+    app.imap_auth.login = Mock(return_value=mailbox)
+    app.auth.logout = Mock()
+    app.auth.login = Mock(side_effect=AssertionError('IMAP must not start Google OAuth'))
+    app.auth.restore = Mock(side_effect=AssertionError('IMAP restore must not need OAuth'))
+    app.connect_imap('reader@example.invalid', 'abcdefghijklmnop')
+    settle(app)
+    assert app.store.account == 'reader@example.invalid'
+    assert app.mailbox is mailbox and app.settings.login_method == 'imap'
+    assert 'IMAP 程式唯讀' in app.connection.get()
+    app.auth.login.assert_not_called()
+    from gmail_summary.auth import ReauthRequired
+    app.imap_auth.login = Mock(side_effect=ReauthRequired('新應用程式密碼無效'))
+    app.connect_imap('reader@example.invalid', 'ponmlkjihgfedcba')
+    settle(app)
+    assert app.mailbox is mailbox and app.store.account == mailbox.account
+    app.imap_auth.restore = Mock(return_value=mailbox)
+    app.connect(restore=True)
+    settle(app)
+    app.auth.restore.assert_not_called()
+    app.imap_auth.logout = Mock()
+    app.logout()
+    settle(app)
+    assert app.mailbox is None and app.store.account is None
+    app.imap_auth.logout.assert_called_once()
+
+
+def test_quick_login_dialog_is_masked_fits_and_cancel_does_not_save(app):
+    import customtkinter as ctk
+    from unittest.mock import Mock
+    app.imap_auth.login = Mock(side_effect=AssertionError('Cancelled dialog must not connect'))
+    app.quick_login()
+    app.update()
+    dialog = next(w for w in app.winfo_children() if isinstance(w, ctk.CTkToplevel))
+    children = []
+
+    def visit(widget):
+        children.append(widget)
+        for child in widget.winfo_children():
+            visit(child)
+    visit(dialog)
+    password = next(w for w in children if isinstance(w, ctk.CTkEntry)
+                    and w.cget('placeholder_text') == 'Google 產生的 16 碼，可含分隔空格')
+    password.insert(0, 'abcdefghijklmnop')
+    assert password.cget('show') == '•'
+    button = next(w for w in children if isinstance(w, ctk.CTkButton) and w.cget('text') == '安全連線 Gmail')
+    assert button.winfo_rooty() + button.winfo_height() <= dialog.winfo_rooty() + dialog.winfo_height()
+    cancel = next(w for w in children if isinstance(w, ctk.CTkButton) and w.cget('text') == '取消')
+    cancel.invoke()
+    app.update()
+    assert not dialog.winfo_exists()
+    app.imap_auth.login.assert_not_called()
+
+
+def test_imap_uid_placeholder_merge_preserves_existing_human_edit(app):
+    from gmail_summary.models import Message
+    account = 'reader@example.invalid'
+    app.reset_session(account)
+    placeholder = Message('imap:123:1', '', account, '', '', '', '讀取失敗', status='讀取失敗')
+    canonical = Message('65', '3e8', account, '', '', '', '同一封信', summary='人工修改保留', status='人工修改')
+    app.store.add(placeholder)
+    app.store.add(canonical)
+    app.checked.add(placeholder.key)
+    restored = Message('65', '3e8', account, '', '', '', '同一封信', body='重新讀取的正文')
+    app.handle_event('read_replaced', (placeholder.key, restored))
+    assert len(app.store.messages) == 1
+    assert app.store.messages[canonical.key].summary == '人工修改保留'
+    assert app.store.messages[canonical.key].body == restored.body
+    assert app.checked == {canonical.key}

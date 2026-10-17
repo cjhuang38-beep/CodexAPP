@@ -1,6 +1,6 @@
 # CodexAPP · 拾信 Gmail 分類與摘要桌面 App
 
-Python 3.12＋CustomTkinter，繁體中文介面。信件與摘要只使用記憶體 list／dict，不使用 SQLite 或其他資料庫。可先透過 Demo 體驗完整流程，再由開發者配置真實 Gmail 與模型 API。
+Python 3.12＋CustomTkinter，繁體中文介面。信件與摘要只使用記憶體 list／dict，不使用 SQLite 或其他資料庫。可先透過 Demo 體驗完整流程，也可使用 Google 應用程式密碼連線 Gmail，**不需要 Google Cloud Console 或 OAuth JSON**。原有瀏覽器 OAuth 仍作為進階選項。
 
 ![Demo 實際介面（Linux 虛擬桌面截圖，非 Windows 驗收）](docs/demo.png)
 
@@ -18,9 +18,21 @@ Demo 信件、姓名、Email、期限與摘要都是明確標示的合成資料�
 
 若 Windows 顯示縮放大於 150%，可使用帳號頁的捲動區與信件表格的水平捲軸；建議 1360×860 以上的邏輯畫面空間。真實 Windows 高 DPI 尚待驗收。
 
+## 最簡單的 Gmail 連線方式（免 Cloud Console）
+
+1. 開啟 [Google 兩步驟驗證](https://myaccount.google.com/signinoptions/two-step-verification)，依 Google 指示啟用。
+2. 開啟 [Google 應用程式密碼](https://myaccount.google.com/apppasswords)，名稱填「拾信」，產生 16 碼密碼。
+3. App 首頁按 **「連線 Gmail（免 Cloud 設定）」**，輸入 Gmail 地址及該 16 碼密碼（可直接貼含分隔空格的版本），按「安全連線 Gmail」。
+
+**不要輸入平常的 Google 密碼，也不要把應用程式密碼貼到聊天或 GitHub。** 密碼只存於作業系統 keyring，重新啟動自動恢復。若撤銷、Google 密碼變更或無法登入，程式會要求重新連線；暫時斷網會保留憑證。登出會移除本機 Gmail 憑證。
+
+此方式使用 IMAP over TLS（`imap.gmail.com:993`），不需要 Gmail API、Cloud 專案或 `oauth_client.json`。應用程式密碼本身**沒有 OAuth 的獨立唯讀 scope**；本程式只使用唯讀 EXAMINE、UID SEARCH 與 BODY.PEEK，不改標籤／已讀、不寄信、不刪信，也不下載附件。
+
+部分學校／公司、進階保護或僅允許安全金鑰的帳號可能沒有「應用程式密碼」選項。請參閱 [簡易連線說明](docs/IMAP_QUICKSTART.md)；若帳號禁止此方式，不能繞過管理員限制，需改用由開發者配置的 OAuth，或先使用 Demo。
+
 ## 操作流程
 
-1. 首頁按 Google 登入或 Demo。首次 Google 授權在**系統瀏覽器**同時選擇帳號並同意 Gmail 唯讀讀取。未授權 Gmail 無法讀信。
+1. 首頁按「連線 Gmail（免 Cloud 設定）」或 Demo。使用應用程式密碼不需要 Cloud 設定；也可選進階 OAuth，首次在系統瀏覽器選擇帳號並同意 Gmail 唯讀讀取。
 2. 「信件搜尋」預設台北時間最近七天、最多 50 封；可調日期、寄件者、主旨、未讀、進階 Gmail 查詢。結束日期包含當日；進階條件以括號組合。Demo 不模擬任意 Gmail 進階語法，會明確提示。
 3. 搜尋表格顯示本次查詢結果；分類摘要頁則累積同一帳號的本次工作階段資料，以帳號＋信件 ID 去重。每封信各自保留，**同主旨不合併**。切換帳號會清空前一帳號資料。
 4. 雙擊表格第一欄勾選、Ctrl／Shift 多選、空白鍵勾選或按全選。「分類摘要」按「分析勾選／所選信件」。勾選優先於表格反白；全選僅套用可見列，隱藏列的原有勾選會保留，總勾選數顯示於表格下方。
@@ -35,12 +47,12 @@ Demo 信件、姓名、Email、期限與摘要都是明確標示的合成資料�
 
 ## 真實 Gmail 與 AI 設定
 
-- **開發者**依 [OAuth 設定與發布要求](docs/OAUTH.md) 預先配置 Desktop OAuth 用戶端與 Gmail API；終端使用者不用建立 Cloud 專案或匯入憑證。沒有配置時 Google 登入會顯示具體提示，Demo 可正常使用。
-- 啟動時自動從 OS keyring 恢復授權並更新過期憑證。授權撤銷或 refresh token 無法使用時提示重新登入；暫時斷網保留憑證，按「重新連線」重試。
-- 真實模式的登出移除本機 Google Token；不等於在 Google 帳號撤銷整個 App 的授權。需撤銷可到 Google 帳號「第三方連線」移除。Demo 離開工作階段不修改先前 Google keyring 授權。
+- **快速 IMAP 連線不需要開發者 OAuth 設定**。只有選擇「進階：Google 瀏覽器 OAuth 登入」時，才由開發者依 [OAuth 設定與發布要求](docs/OAUTH.md) 配置 Desktop client 與 Gmail API。
+- 啟動時自動從 OS keyring 恢復上次使用的連線方式。IMAP 密碼失效會提示重建；OAuth 憑證過期則自動更新。授權撤銷或 refresh token 無法使用時提示重新登入；暫時斷網保留憑證，按「重新連線」重試。
+- 真實模式的登出移除本機 Google Token 與 IMAP 應用程式密碼；不等於在 Google 帳號撤銷整個 App 的授權。需撤銷可到 Google 帳號「第三方連線」移除。Demo 離開工作階段不修改先前 Google keyring 授權。
 - 在「帳號設定」選 OpenAI 或支援 `/chat/completions`、`response_format: json_object` 的 OpenAI 相容服務，設定模型、HTTPS 基礎網址與 key。OpenAI 選項固定官方網址；其他服務選「OpenAI 相容」。模型是否可用取決於帳號與供應商。
 - API key 僅存於該供應商／網址的 keyring 位置；留空沿用。變更網址不會挪用舊網址的 key，避免誤送；可刪除目前服務的 key。
-- 一般偏好在 `%LOCALAPPDATA%\GmailSummary\preferences.json`，僅含外觀、分類、供應商、模型、網址與正文長度。Token、refresh token、API key 不寫入 JSON、CSV、程式碼或日誌。
+- 一般偏好在 `%LOCALAPPDATA%\GmailSummary\preferences.json`，僅含外觀、登入方式、分類、供應商、模型、網址與正文長度。應用程式密碼、Token、refresh token、API key 不寫入 JSON、CSV、程式碼或日誌。
 - 無安全 OS keyring 時拒絕明文回退；Windows 使用 Windows Credential Manager。Linux 若只有 headless 環境可使用 Demo；真實模式需要已解鎖的 Secret Service。
 
 ## 開發與測試
@@ -81,7 +93,8 @@ PyInstaller 不能從此 Linux 環境交叉產生 Windows exe；spec 在非 Wind
 - `ui.py`：CustomTkinter／ttk；所有 Tk 操作位於主執行緒。
 - `workers.py`：背景 Thread＋queue；主執行緒每 80ms 以 `after()` 接收結果。取消以 Event 控制。
 - `auth.py`／`security.py`：官方 InstalledAppFlow、PKCE、loopback、唯讀 scope、OS keyring。
-- `gmail.py`：分頁、MIME、文字／HTML 解析；不載入網頁、追蹤圖片或附件，不呼叫修改、寄信或刪信 API。
+- `imap_mail.py`：免 Cloud 的 Gmail 應用程式密碼連線、TLS、唯讀 IMAP、Gmail 原生搜尋語法、BODYSTRUCTURE 選正文而非下載整封信。Gmail IMAP 十進位 ID 轉成 API 相同的十六進位 ID，便於去重；缺少 Gmail ID 時使用 UIDVALIDITY＋UID 後備識別。每段正文最多讀取 2 MiB，超過會標示限制。
+- `gmail.py`：OAuth API 分頁、MIME、文字／HTML 解析；不載入網頁、追蹤圖片或附件，不呼叫修改、寄信或刪信 API。
 - `ai.py`：可替換的獨立 AI 服務模組，結構化輸出、分類驗證、期限原文引句檢查。信件指令僅視為資料，沒有工具或執行能力。
 - `models.py`／`csvio.py`／`settings.py`：記憶體資料、UTF-8 BOM、CSV 公式防護、非秘密 JSON。
 - `demo.py`：合成信件及模擬摘要，使用相同搜尋／分析事件與 UI。

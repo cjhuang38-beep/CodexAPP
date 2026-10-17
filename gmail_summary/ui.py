@@ -5,15 +5,17 @@ from datetime import date
 from pathlib import Path
 from queue import Empty
 import tkinter as tk
+import webbrowser
 from tkinter import filedialog, messagebox, ttk
 
 import customtkinter as ctk
 
 from .ai import OpenAICompatibleService, validate_endpoint
-from .auth import AuthService
+from .auth import AuthService, ReauthRequired
 from .csvio import export_csv, import_csv
 from .demo import DEMO_ACCOUNT, DemoAnalyzer, DemoMailbox
 from .gmail import GmailService
+from .imap_mail import GmailImapService, ImapAuth, validate_login
 from .models import MailStore, Search
 from .security import SecretStore, api_key_slot
 from .settings import Settings, oauth_path
@@ -31,6 +33,7 @@ class App(ctk.CTk):
         self.store = MailStore()
         self.secrets = SecretStore()
         self.auth = AuthService(self.secrets, oauth_path())
+        self.imap_auth = ImapAuth(self.secrets)
         self.jobs = JobRunner()
         self.mailbox = None
         self.is_demo = False
@@ -110,14 +113,16 @@ class App(ctk.CTk):
         welcome = ctk.CTkFrame(page)
         welcome.grid(row=0, column=0, sticky="ew", pady=(0, 14))
         ctk.CTkLabel(welcome, text="把信件整理成清楚的下一步", font=ctk.CTkFont(size=24, weight="bold")).pack(anchor="w", padx=24, pady=(24, 8))
-        ctk.CTkLabel(welcome, text="首次登入會在系統瀏覽器選擇 Google 帳號，並一併取得 Gmail 唯讀同意。\nGoogle 登入本身不代表 Gmail 存取權。信件只保留於本次執行，請主動匯出 CSV。", justify="left").pack(anchor="w", padx=24, pady=(0, 18))
+        ctk.CTkLabel(welcome, text="快速連線：開啟 Google 兩步驟驗證，建立 16 碼應用程式密碼即可，不需要 Cloud Console。\n本程式只讀取信件、不下載附件；密碼存於 Windows 認證管理員。信件請主動匯出 CSV 保存。", justify="left").pack(anchor="w", padx=24, pady=(0, 18))
         buttons = ctk.CTkFrame(welcome, fg_color="transparent")
         buttons.pack(fill="x", padx=24, pady=(0, 24))
-        self.login_button = ctk.CTkButton(buttons, text="使用 Google 帳號登入", command=self.connect)
+        self.login_button = ctk.CTkButton(buttons, text="連線 Gmail（免 Cloud 設定）", width=200, command=self.quick_login)
         self.login_button.pack(side="left", padx=(0, 10))
         ctk.CTkButton(buttons, text="進入 Demo（無需帳號）", command=self.enter_demo).pack(side="left", padx=6)
         ctk.CTkButton(buttons, text="重新連線", width=96, command=lambda: self.connect(restore=True)).pack(side="left", padx=6)
         ctk.CTkButton(buttons, text="登出", width=72, fg_color="gray40", command=self.logout).pack(side="left", padx=6)
+        ctk.CTkButton(welcome, text="進階：Google 瀏覽器 OAuth 登入（需開發者設定）", fg_color="transparent",
+                      command=lambda: self.connect()).pack(anchor="w", padx=24, pady=(0, 16))
         ai = ctk.CTkFrame(page)
         ai.grid(row=1, column=0, sticky="ew", pady=(0, 14))
         ai.grid_columnconfigure(1, weight=1)
@@ -393,14 +398,90 @@ class App(ctk.CTk):
         self.jobs.start(task)
         return True
 
+    def quick_login(self):
+        if self.block_busy():
+            return
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("連線 Gmail · 不需要 Cloud Console")
+        dialog.geometry("660x570")
+        dialog.resizable(False, False)
+        dialog.transient(self)
+        dialog.grab_set()
+        dialog.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(dialog, text="使用 Google 應用程式密碼", font=ctk.CTkFont(size=23, weight="bold")).grid(
+            row=0, column=0, padx=24, pady=(24, 12), sticky="w")
+        ctk.CTkLabel(dialog, text="① 開啟 Google 兩步驟驗證　② 建立 16 碼應用程式密碼\n③ 在下方輸入 Email 與該密碼，即可連線。", justify="left").grid(
+            row=1, column=0, padx=24, sticky="w")
+        links = ctk.CTkFrame(dialog, fg_color="transparent")
+        links.grid(row=2, column=0, padx=24, pady=14, sticky="w")
+        ctk.CTkButton(links, text="開啟兩步驟驗證", command=lambda: webbrowser.open("https://myaccount.google.com/signinoptions/two-step-verification")).pack(side="left", padx=(0, 10))
+        ctk.CTkButton(links, text="建立應用程式密碼", command=lambda: webbrowser.open("https://myaccount.google.com/apppasswords")).pack(side="left")
+        ctk.CTkLabel(dialog, text="Gmail／Google Workspace Email").grid(row=3, column=0, padx=24, sticky="w")
+        account_entry = ctk.CTkEntry(dialog, placeholder_text="yourname@gmail.com")
+        account_entry.grid(row=4, column=0, padx=24, pady=(4, 12), sticky="ew")
+        if self.store.account and not self.is_demo:
+            account_entry.insert(0, self.store.account)
+        ctk.CTkLabel(dialog, text="16 碼應用程式密碼（不要輸入平常的 Google 密碼）").grid(row=5, column=0, padx=24, sticky="w")
+        password_entry = ctk.CTkEntry(dialog, show="•", placeholder_text="Google 產生的 16 碼，可含分隔空格")
+        password_entry.grid(row=6, column=0, padx=24, pady=(4, 12), sticky="ew")
+        ctk.CTkLabel(dialog, text="密碼僅存於作業系統 keyring，可在 Google 帳號隨時撤銷。\n應用程式密碼沒有獨立唯讀 scope；本程式只以 IMAP 唯讀收信。\n部分學校／公司、進階保護帳號可能禁止此方式。不要把密碼貼到聊天。", justify="left", text_color="gray").grid(
+            row=7, column=0, padx=24, pady=6, sticky="w")
+        buttons = ctk.CTkFrame(dialog, fg_color="transparent")
+        buttons.grid(row=8, column=0, padx=24, pady=16, sticky="e")
+
+        def dismiss():
+            password_entry.delete(0, "end")
+            dialog.destroy()
+
+        def submit():
+            account, password = account_entry.get(), password_entry.get()
+            try:
+                account, password = validate_login(account, password)
+            except ValueError as exc:
+                messagebox.showinfo("請檢查連線資料", str(exc), parent=dialog)
+                return
+            dismiss()
+            self.connect_imap(account, password)
+        ctk.CTkButton(buttons, text="取消", width=90, fg_color="gray40", command=dismiss).pack(side="left", padx=10)
+        ctk.CTkButton(buttons, text="安全連線 Gmail", command=submit).pack(side="left")
+        dialog.protocol("WM_DELETE_WINDOW", dismiss)
+        password_entry.bind("<Return>", lambda _: submit())
+        account_entry.focus_set()
+
+    def connect_imap(self, account, password):
+        if self.block_busy() or (self.store.messages and not self.confirm_discard()):
+            return
+        self.connection.set("正在連線 Gmail IMAP…")
+
+        def task(cancel, emit):
+            try:
+                mailbox = self.imap_auth.login(account, password, cancel)
+            except ReauthRequired as exc:
+                # A rejected replacement login must not disconnect the previous session.
+                emit("error", str(exc))
+                return
+            if mailbox is not None and not cancel.is_set():
+                # Remove obsolete OAuth credentials only after the new method succeeds.
+                self.auth.logout()
+                emit("connected", (mailbox, mailbox.account))
+        self.start_job(task, "正在安全連線 imap.gmail.com；不需要 Cloud Console 設定。")
+
     def connect(self, restore=False):
         if self.block_busy():
             return
         if self.store.messages and not self.confirm_discard():
             return
         self.connection.set("正在恢復連線…" if restore else "等待瀏覽器授權…")
+        preference = self.settings.login_method
 
         def task(cancel, emit):
+            if restore:
+                mailbox = self.imap_auth.restore() if preference == "imap" else None
+                if cancel.is_set():
+                    return
+                if mailbox is not None:
+                    emit("connected", (mailbox, mailbox.account))
+                    return
             creds = self.auth.restore() if restore else self.auth.login(cancel)
             if cancel.is_set():
                 return
@@ -410,8 +491,10 @@ class App(ctk.CTk):
             mailbox = GmailService(self.auth, creds)
             account = mailbox.profile()
             if not cancel.is_set():
+                if not restore:
+                    self.imap_auth.logout()
                 emit("connected", (mailbox, account))
-        self.start_job(task, "正在連線 Google；登入最長等待 180 秒，可取消並在瀏覽器關閉授權頁。")
+        self.start_job(task, "正在恢復安全連線…" if restore else "請在系統瀏覽器完成 OAuth 授權（最長 180 秒）。")
 
     def enter_demo(self):
         if self.block_busy() or not self.confirm_discard():
@@ -444,9 +527,10 @@ class App(ctk.CTk):
 
         def task(cancel, emit):
             self.auth.logout()
+            self.imap_auth.logout()
             emit("logged_out")
         # Demo has no Google credential; leave any real keyring session untouched.
-        if self.is_demo or self.mailbox is None:
+        if self.is_demo:
             self.reset_session(None)
             self.connection.set("已離開本次工作階段")
         else:
@@ -456,7 +540,7 @@ class App(ctk.CTk):
         if self.block_busy():
             return
         if not self.mailbox:
-            self.notice("請先登入 Google 或進入 Demo。")
+            self.notice("請先連線 Gmail 或進入 Demo。")
             return
         self.commit_editor(silent=True)
         try:
@@ -643,7 +727,7 @@ class App(ctk.CTk):
         failures = [m for m in self.store.messages.values() if m.status in {"分析失敗", "讀取失敗"}]
         reads = [copy.deepcopy(m) for m in failures if m.status == "讀取失敗"]
         if reads:
-            if not isinstance(self.mailbox, GmailService):
+            if not isinstance(self.mailbox, (GmailService, GmailImapService)):
                 self.notice("請先連線對應 Gmail 帳號，再重試讀取失敗項目。")
                 return
             mailbox = self.mailbox
@@ -692,6 +776,30 @@ class App(ctk.CTk):
             if data.key == self.current_key:
                 self.load_editor()
             self.refresh_tables()
+        elif kind == "read_replaced":
+            old_key, replacement = data
+            if old_key in self.store.messages:
+                del self.store.messages[old_key]
+                existing = self.store.messages.get(replacement.key)
+                if existing is None:
+                    self.store.messages[replacement.key] = replacement
+                elif not existing.body:
+                    # Resolve a UID placeholder without erasing canonical-row human edits.
+                    existing.body = replacement.body
+                    existing.limitation = replacement.limitation
+                    if existing.status == "讀取失敗":
+                        existing.status, existing.error = "待處理", ""
+                self.store.revision += 1
+                if old_key in self.checked:
+                    self.checked.remove(old_key)
+                    self.checked.add(replacement.key)
+                if self.current_key == old_key:
+                    self.current_key = replacement.key
+                    self.load_editor()
+                if self.search_result_keys is not None and old_key in self.search_result_keys:
+                    self.search_result_keys.remove(old_key)
+                    self.search_result_keys.add(replacement.key)
+                self.refresh_tables()
         elif kind == "read_retry":
             if data.key in self.store.messages:
                 self.store.messages[data.key] = data
@@ -723,12 +831,15 @@ class App(ctk.CTk):
             else:
                 self.reset_session(account)
                 self.mailbox = mailbox
-            self.connection.set("已連線 · Gmail 唯讀")
+            is_imap = isinstance(mailbox, GmailImapService)
+            self.settings.login_method = "imap" if is_imap else "oauth"
+            self.save_preferences()
+            self.connection.set("已連線 · IMAP 程式唯讀" if is_imap else "已連線 · Gmail 唯讀")
         elif kind == "no_credentials":
-            self.connection.set("尚無 Google 授權，請登入或使用 Demo")
+            self.connection.set("請選擇連線 Gmail 或使用 Demo")
         elif kind == "logged_out":
             self.reset_session(None)
-            self.connection.set("已登出 · 本機 Google Token 已移除")
+            self.connection.set("已登出 · 本機 Gmail 連線憑證已移除")
         elif kind == "reauth":
             self.mailbox = None
             self.connection.set("授權失效 · 請重新登入")
@@ -742,7 +853,7 @@ class App(ctk.CTk):
             self.progress_text.set(data)
             self.notice(data)
         elif kind == "done":
-            if data and ("等待" in self.connection.get() or "正在恢復" in self.connection.get()):
+            if data and ("等待" in self.connection.get() or "正在" in self.connection.get()):
                 self.connection.set("已取消連線" if not self.mailbox else "先前連線保留")
             self.pending = False
             self.cancel_button.configure(state="disabled")
