@@ -1,0 +1,39 @@
+name: Windows Demo and package
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'gmail_summary/**'
+      - 'tests/**'
+      - '*.lock'
+      - '*.spec'
+      - '*.py'
+      - 'pyproject.toml'
+      - '.github/workflows/windows.yml'
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  demo-and-onedir:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements-dev.lock
+      - name: Install verified locked dependencies
+        run: python -m pip install --require-hashes -r requirements-dev.lock
+      - name: Lint
+        run: python -m ruff check gmail_summary tests desktop_entry.py
+      - name: Demo, core and desktop tests
+        run: python -m pytest -q
+      - name: Build onedir without credentials
+        run: python -m PyInstaller --noconfirm --clean GmailSummary.spec
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GmailSummary-Windows-onedir-DEMO
+          path: dist/GmailSummary/
+          retention-days: 7

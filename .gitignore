@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+*.log
+*.csv
+.env
+.env.*
+!config/*.example.json
+oauth_client.json
+credentials.json
+token*.json
+*.key
+*.pem
+.local/
